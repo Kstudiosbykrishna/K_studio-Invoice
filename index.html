@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>INVOICE</title>
+<style>
+  :root{--bg:#f4f7fb;--card:#fff;--muted:#6b7280;--accent:#0f172a;--btn:#0ea5a9}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:var(--bg);color:var(--accent);padding:18px}
+  .wrap{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:1fr 460px;gap:18px}
+  header{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  h1{font-size:1.15rem;margin:0}
+  .panel{background:var(--card);padding:12px;border-radius:10px;box-shadow:0 8px 22px rgba(15,23,42,0.06)}
+  label{display:block;margin:8px 0;font-size:0.95rem}
+  input[type=text], input[type=number], input[type=date], select {width:100%;padding:8px;border-radius:8px;border:1px solid #e6eef3;margin-top:6px}
+  .row{display:flex;gap:8px}
+  .row > *{flex:1}
+  .prices{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .events{display:flex;flex-direction:column;gap:10px}
+  .event-row{display:grid;grid-template-columns:1fr 180px;gap:8px;align-items:start;padding:8px;border-radius:8px;background:linear-gradient(180deg,rgba(14,165,169,0.03),transparent)}
+  .services{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .services label{font-size:0.9rem}
+  button{background:var(--btn);border:0;color:white;padding:10px 12px;border-radius:8px;cursor:pointer}
+  .controls{display:flex;gap:8px;justify-content:flex-start;margin-top:10px}
+  .invoice{padding:12px;min-height:420px}
+  .invoice h3{margin-top:0}
+  table{width:100%;border-collapse:collapse;margin-top:10px}
+  th,td{padding:8px;border-bottom:1px dashed #eee;text-align:left;font-size:0.95rem}
+  .summary{margin-top:10px;text-align:right;font-weight:700}
+  .print-btn{background:#111;padding:8px 10px}
+  .hidden{display:none}
+  @media (max-width:980px){.wrap{grid-template-columns:1fr} .invoice{order:2}}
+  /* Print styles */
+  @media print{
+    body{padding:0}
+    .controls, .prices, .inputs-only, .top-actions, .header-action, #saveLocalBtn {display:none}
+    .wrap{grid-template-columns:1fr}
+    .panel{box-shadow:none;border-radius:0}
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>K STUDIOS</h1>
+      <div class="top-actions">
+        <button id="okBtn">OK / Preview Invoice</button>
+        <button id="printBtn" class="print-btn">Print / Save as PDF</button>
+        <button id="saveLocalBtn">Save Locally</button>
+      </div>
+    </header>
+
+    <section class="panel inputs-only">
+      <form id="quoteForm" onsubmit="return false;">
+        <div class="row">
+          <label>Client name
+            <input type="text" id="clientName" placeholder="Client name (required)">
+          </label>
+          <label>Event date
+            <input type="date" id="eventDate">
+          </label>
+        </div>
+
+        <label>Location
+          <input type="text" id="location" placeholder="Venue / city">
+        </label>
+
+        <div class="panel" style="margin-top:8px">
+          <strong>Service prices (editable)</strong>
+          <div class="prices" id="pricesArea"></div>
+        </div>
+
+        <div style="margin-top:10px">
+          <strong>Events (fill only rows you need)</strong>
+          <div class="events" id="eventsArea"></div>
+        </div>
+
+        <div class="row" style="margin-top:8px">
+          <label>No of sheets<input type="number" id="noSheets" min="0" value="0"></label>
+          <label>Promo<input type="text" id="promo" placeholder="Promo / notes"></label>
+        </div>
+
+        <div class="row" style="margin-top:8px">
+          <label>Frames?
+            <select id="framesEnabled">
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </label>
+          <label>Frames count<input type="number" id="framesCount" min="0" value="0"></label>
+        </div>
+
+        <label>Discount (₹)
+          <input type="number" id="discount" min="0" step="0.01" value="0">
+        </label>
+
+        <div class="controls">
+          <button id="previewBtn">Preview (also computes totals)</button>
+          <button id="clearBtn" type="button" style="background:#ef4444">Clear</button>
+        </div>
+      </form>
+    </section>
+
+    <aside class="panel invoice" id="invoicePanel">
+      <div id="invoiceArea">
+        <h3>Invoice preview</h3>
+        <div id="invoiceMeta" style="color:var(--muted);font-size:0.95rem"></div>
+        <div id="invoiceTable"></div>
+        <div id="invoiceSummary" class="summary"></div>
+        <div style="margin-top:8px;color:var(--muted)" id="invoiceNotes"></div>
+      </div>
+    </aside>
+  </div>
+
+<script>
+(function(){
+  // Default prices (editable)
+  const DEFAULT_PRICES = {
+    "5d_photos": 10000,
+    "4k_video": 12000,
+    "drone": 8000,
+    "candid_pic": 5000,
+    "candid_vid": 7000,
+    "led": 6000,
+    "net_live": 15000,
+    "frame_unit": 500
+  };
+
+  // Utilities
+  function $(id){return document.getElementById(id)}
+  function fmt(n){ return Number(n).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits:2}) }
+  function createEl(tag,html){ const e=document.createElement(tag); e.innerHTML=html; return e }
+
+  // Build prices area
+  const pricesArea = $('pricesArea');
+  const prices = Object.assign({}, DEFAULT_PRICES);
+  function buildPricesUI(){
+    pricesArea.innerHTML = '';
+    Object.keys(prices).forEach(k=>{
+      const label = createEl('label', `<span style="font-weight:600">${k.replace('_',' ').toUpperCase()}</span>`);
+      const inp = document.createElement('input');
+      inp.type='number'; inp.min=0; inp.value=prices[k]; inp.dataset.key=k;
+      inp.style.marginLeft='8px'; inp.style.width='120px';
+      inp.addEventListener('input', e=>{ prices[e.target.dataset.key]=Number(e.target.value||0); computeLive(); });
+      label.appendChild(inp);
+      pricesArea.appendChild(label);
+    });
+  }
+
+  // Build events rows (6)
+  const eventsArea = $('eventsArea');
+  const MAX_EVENTS = 6;
+  const SERVICE_KEYS = ['5d_photos','4k_video','drone','candid_pic','candid_vid','led','net_live'];
+  const SERVICE_LABELS = {'5d_photos':'5D Photos','4k_video':'4K Video','drone':'Drone','candid_pic':'Candid Pic','candid_vid':'Candid Vid','led':'LED','net_live':'NET Live'};
+
+  function buildEventsUI(){
+    eventsArea.innerHTML = '';
+    for(let i=1;i<=MAX_EVENTS;i++){
+      const ev = createEl('div', '');
+      ev.className='event-row';
+      ev.innerHTML = `
+        <div>
+          <label>Event name <input type="text" data-name="${i}" placeholder="Haldi / Reception / ..."></label>
+          <div class="services" id="svc-${i}"></div>
+        </div>
+        <div>
+          <label>Photo cams <input type="text" data-photo="${i}" placeholder="e.g. 2"></label>
+          <label>Video cams <input type="text" data-video="${i}" placeholder="e.g. 1"></label>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+            <small style="color:var(--muted)">Row ${i}</small>
+            <div style="font-weight:700" data-cost="${i}">₹ 0.00</div>
+          </div>
+        </div>
+      `;
+      eventsArea.appendChild(ev);
+      const svcWrap = $(`svc-${i}`);
+      SERVICE_KEYS.forEach(k=>{
+        const lab = createEl('label', `<input type="checkbox" data-srv="${k}" data-row="${i}"> ${SERVICE_LABELS[k]}`);
+        lab.style.marginRight='6px';
+        svcWrap.appendChild(lab);
+      });
+    }
+    // attach listeners
+    eventsArea.querySelectorAll('input').forEach(inp=>{
+      inp.addEventListener('input', computeLive);
+    });
+    eventsArea.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+      cb.addEventListener('change', computeLive);
+    });
+  }
+
+  // Gather form data
+  function gather(){
+    const clientName = $('clientName').value.trim();
+    const eventDate = $('eventDate').value;
+    const location = $('location').value.trim();
+    const noSheets = Number($('noSheets').value || 0);
+    const promo = $('promo').value;
+    const framesEnabled = $('framesEnabled').value === 'yes';
+    const framesCount = Number($('framesCount').value || 0);
+    const discount = Number($('discount').value || 0);
+    const evs = [];
+    for(let i=1;i<=MAX_EVENTS;i++){
+      const name = document.querySelector(`[data-name="${i}"]`).value.trim();
+      const photo = document.querySelector(`[data-photo="${i}"]`).value.trim();
+      const video = document.querySelector(`[data-video="${i}"]`).value.trim();
+      const services = [];
+      document.querySelectorAll(`[data-srv][data-row="${i}"]`).forEach(cb=>{ if(cb.checked) services.push(cb.dataset.srv) });
+      evs.push({name,photo,video,services});
+    }
+    return {clientName,eventDate,location,noSheets,promo,framesEnabled,framesCount,discount,evs};
+  }
+
+  // Compute and render invoice preview
+  function computeAndRender(){
+    const data = gather();
+    // basic validation: client name required to render
+    if(!data.clientName){
+      $('invoiceMeta').innerText = 'Enter client name to preview invoice.';
+      $('invoiceTable').innerHTML=''; $('invoiceSummary').innerHTML=''; $('invoiceNotes').innerText='';
+      return;
+    }
+    const metaParts = [`Client: ${data.clientName}`];
+    if(data.eventDate) metaParts.push(`Date: ${data.eventDate}`);
+    if(data.location) metaParts.push(`Location: ${data.location}`);
+    $('invoiceMeta').innerText = metaParts.join(' • ');
+
+    // compute per-event costs
+    let subtotal = 0;
+    const rows = [];
+    data.evs.forEach((ev, idx)=>{
+      // skip empty rows (no name and no services)
+      if(!ev.name && ev.services.length===0 && !ev.photo && !ev.video) return;
+      let cost = 0;
+      ev.services.forEach(s=>{
+        cost += Number(prices[s] || 0);
+      });
+      subtotal += cost;
+      rows.push({idx: rows.length+1, name: ev.name || ('Event '+(idx+1)), services: ev.services.slice(), photo: ev.photo, video: ev.video, cost});
+      // show per-row cost element
+      const costEl = document.querySelector(`[data-cost="${idx+1}"]`);
+      if(costEl) costEl.textContent = `₹ ${fmt(cost)}`;
+    });
+
+    // frames
+    let framesCost = 0;
+    if(data.framesEnabled && data.framesCount>0){
+      framesCost = Number(prices.frame_unit || 0) * data.framesCount;
+      subtotal += framesCost;
+    }
+
+    // totals
+    const discount = data.discount || 0;
+    const finalTotal = Math.max(0, subtotal - discount);
+
+    // build HTML table
+    if(rows.length===0 && framesCost===0){
+      $('invoiceTable').innerHTML = '<div style="color:var(--muted)">No items selected yet. Check services and enter event names, then click Preview.</div>';
+    } else {
+      let html = `<table><thead><tr><th>#</th><th>Event</th><th>Services</th><th>Cameras</th><th style="text-align:right">Cost (₹)</th></tr></thead><tbody>`;
+      rows.forEach(r=>{
+        const servicesText = r.services.length ? '<ul style="margin:0;padding-left:14px">'+ r.services.map(s=>'<li>'+ (s.replace('_',' ').toUpperCase()) +'</li>').join('') +'</ul>' : '-';
+        html += `<tr><td>${r.idx}</td><td>${escapeHtml(r.name)}</td><td>${servicesText}</td><td>Photo: ${escapeHtml(r.photo)}<br>Video: ${escapeHtml(r.video)}</td><td style="text-align:right">${fmt(r.cost)}</td></tr>`;
+      });
+      if(framesCost>0){
+        html += `<tr><td>-</td><td>Frames</td><td>-</td><td>Count: ${data.framesCount}</td><td style="text-align:right">${fmt(framesCost)}</td></tr>`;
+      }
+      html += `</tbody></table>`;
+      $('invoiceTable').innerHTML = html;
+    }
+
+    // summary
+    $('invoiceSummary').innerHTML = `Subtotal: ₹ ${fmt(subtotal)}<br>Discount: ₹ ${fmt(discount)}<br style="margin-top:6px">Final total: ₹ ${fmt(finalTotal)}`;
+
+    // notes
+    $('invoiceNotes').innerText = `Promo: ${data.promo || '-'} • No of sheets: ${data.noSheets || 0}`;
+  }
+
+  // small helper
+  function escapeHtml(s){ if(!s) return ''; return s.toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  // computeLive triggers computeAndRender but doesn't require client name
+  function computeLive(){ computeAndRender(); }
+
+  // Attach buttons
+  $('okBtn').addEventListener('click', computeAndRender);
+  $('previewBtn').addEventListener('click', computeAndRender);
+  $('printBtn').addEventListener('click', ()=>{
+    // ensure invoice rendered before print
+    computeAndRender();
+    window.print();
+  });
+  $('clearBtn').addEventListener('click', ()=>{
+    if(!confirm('Clear all inputs?')) return;
+    document.getElementById('quoteForm').reset();
+    // reset prices to defaults
+    Object.keys(prices).forEach(k=>prices[k]=DEFAULT_PRICES[k]);
+    buildPricesUI();
+    buildEventsUI();
+    computeLive();
+  });
+
+  // Save locally (download JSON)
+  $('saveLocalBtn').addEventListener('click', ()=>{
+    const data = gather();
+    data.prices = prices;
+    // compute preview to include totals
+    computeAndRender();
+    const payload = {meta: {client: data.clientName, date: data.eventDate, location: data.location}, data};
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `quote_${(data.clientName||'client').replace(/\s+/g,'_')}.json`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  });
+
+  // init
+  buildPricesUI();
+  buildEventsUI();
+  computeLive();
+})();
+</script>
+</body>
+</html>
