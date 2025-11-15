@@ -222,7 +222,7 @@
       return;
     }
     const metaParts = [`Client: ${data.clientName}`];
-    if(data.eventDate) metaParts.push(`Date: ${data.eventDate}`);
+    if(data.eventDate) metaParts.push(`Event Date: ${data.eventDate}`);
     if(data.location) metaParts.push(`Location: ${data.location}`);
     $('invoiceMeta').innerText = metaParts.join(' • ');
 
@@ -323,3 +323,4 @@
 </script>
 </body>
 </html>
+
